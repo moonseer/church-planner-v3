@@ -1,0 +1,434 @@
+version: '3.8'
+
+services:
+  # API Gateway
+  api-gateway:
+    image: traefik:v2.10
+    container_name: church-planner-gateway
+    ports:
+      - "8080:80"
+      - "8443:443"
+      - "8081:8080" # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./services/api-gateway/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./services/api-gateway/config:/etc/traefik/config:ro
+    networks:
+      - church-planner-network
+    depends_on:
+      - auth-service
+      - churches-service
+      - members-service
+      - events-service
+      - scheduling-service
+      - messaging-service
+      - file-service
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-auth
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./services/auth-service:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=postgres
+      - DATABASE_NAME=auth_db
+      - DATABASE_SYNC=true
+      - DATABASE_LOGGING=true
+      - JWT_SECRET=your_jwt_secret_for_development
+      - JWT_EXPIRATION=1d
+      - NATS_URL=nats://nats:4222
+      - CORS_ORIGIN=http://localhost:3000
+    networks:
+      - church-planner-network
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=PathPrefix(`/api/auth`)"
+      - "traefik.http.services.auth.loadbalancer.server.port=3001"
+
+  # Churches Service
+  churches-service:
+    build:
+      context: ./services/churches-service
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-churches
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./services/churches-service:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=churches_db
+      - NATS_URL=nats://nats:4222
+      - AUTH_SERVICE_URL=http://auth-service:3001
+    networks:
+      - church-planner-network
+    depends_on:
+      - postgres
+      - nats
+      - auth-service
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.churches.rule=PathPrefix(`/api/churches`)"
+      - "traefik.http.services.churches.loadbalancer.server.port=3002"
+
+  # Members Service
+  members-service:
+    build:
+      context: ./services/members-service
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-members
+    ports:
+      - "3003:3003"
+    volumes:
+      - ./services/members-service:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3003
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=members_db
+      - NATS_URL=nats://nats:4222
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - CHURCHES_SERVICE_URL=http://churches-service:3002
+    networks:
+      - church-planner-network
+    depends_on:
+      - postgres
+      - nats
+      - auth-service
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.members.rule=PathPrefix(`/api/members`)"
+      - "traefik.http.services.members.loadbalancer.server.port=3003"
+
+  # Events Service
+  events-service:
+    build:
+      context: ./services/events-service
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-events
+    ports:
+      - "3004:3004"
+    volumes:
+      - ./services/events-service:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3004
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=events_db
+      - NATS_URL=nats://nats:4222
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - CHURCHES_SERVICE_URL=http://churches-service:3002
+    networks:
+      - church-planner-network
+    depends_on:
+      - postgres
+      - nats
+      - auth-service
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.events.rule=PathPrefix(`/api/events`)"
+      - "traefik.http.services.events.loadbalancer.server.port=3004"
+
+  # Scheduling Service
+  scheduling-service:
+    build:
+      context: ./services/scheduling-service
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-scheduling
+    ports:
+      - "3005:3005"
+    volumes:
+      - ./services/scheduling-service:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3005
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=scheduling_db
+      - NATS_URL=nats://nats:4222
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - MEMBERS_SERVICE_URL=http://members-service:3003
+      - EVENTS_SERVICE_URL=http://events-service:3004
+    networks:
+      - church-planner-network
+    depends_on:
+      - postgres
+      - nats
+      - auth-service
+      - members-service
+      - events-service
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.scheduling.rule=PathPrefix(`/api/scheduling`)"
+      - "traefik.http.services.scheduling.loadbalancer.server.port=3005"
+
+  # Messaging Service
+  messaging-service:
+    build:
+      context: ./services/messaging-service
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-messaging
+    ports:
+      - "3006:3006"
+    volumes:
+      - ./services/messaging-service:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3006
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=messaging_db
+      - NATS_URL=nats://nats:4222
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+    networks:
+      - church-planner-network
+    depends_on:
+      - postgres
+      - nats
+      - redis
+      - auth-service
+      - mailhog
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.messaging.rule=PathPrefix(`/api/messaging`)"
+      - "traefik.http.services.messaging.loadbalancer.server.port=3006"
+
+  # File Service
+  file-service:
+    build:
+      context: ./services/file-service
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-file
+    ports:
+      - "3007:3007"
+    volumes:
+      - ./services/file-service:/app
+      - /app/node_modules
+      - ./uploads:/app/uploads
+    environment:
+      - NODE_ENV=development
+      - PORT=3007
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=file_db
+      - NATS_URL=nats://nats:4222
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - UPLOAD_DIR=/app/uploads
+      - MAX_FILE_SIZE=10485760 # 10MB
+    networks:
+      - church-planner-network
+    depends_on:
+      - postgres
+      - nats
+      - auth-service
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.file.rule=PathPrefix(`/api/files`)"
+      - "traefik.http.services.file.loadbalancer.server.port=3007"
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: church-planner-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - REACT_APP_API_URL=http://localhost:8080/api
+      - REACT_APP_AUTH_URL=http://localhost:8080/api/auth
+      - REACT_APP_WEBSOCKET_URL=ws://localhost:8080/ws
+    networks:
+      - church-planner-network
+    depends_on:
+      - api-gateway
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+  # Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: church-planner-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_MULTIPLE_DATABASES=auth_db,churches_db,members_db,events_db,scheduling_db,messaging_db,file_db
+    networks:
+      - church-planner-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Cache
+  redis:
+    image: redis:7-alpine
+    container_name: church-planner-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - church-planner-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Message Broker
+  nats:
+    image: nats:2-alpine
+    container_name: church-planner-nats
+    ports:
+      - "4222:4222"  # Client connections
+      - "8222:8222"  # HTTP monitoring
+    command: ["-js", "-m", "8222"]
+    networks:
+      - church-planner-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: church-planner-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    networks:
+      - church-planner-network
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:10.0.3
+    container_name: church-planner-grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - church-planner-network
+    depends_on:
+      - prometheus
+      - loki
+
+  # Monitoring - Loki (Logs)
+  loki:
+    image: grafana/loki:2.8.4
+    container_name: church-planner-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/local-config.yaml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - church-planner-network
+
+  # Monitoring - Jaeger (Tracing)
+  jaeger:
+    image: jaegertracing/all-in-one:1.47
+    container_name: church-planner-jaeger
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_ZIPKIN_HTTP_PORT=9411
+    networks:
+      - church-planner-network
+
+  # Testing - Mailhog (Email Testing)
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: church-planner-mailhog
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    networks:
+      - church-planner-network
+
+networks:
+  church-planner-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  loki-data: 

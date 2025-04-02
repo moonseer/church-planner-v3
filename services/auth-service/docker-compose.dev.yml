@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=postgres
+      - DATABASE_NAME=postgres
+      - DATABASE_SYNC=true
+      - DATABASE_LOGGING=true
+      - JWT_SECRET=dev_jwt_secret
+      - JWT_EXPIRATION=1h
+      - NATS_URL=nats://nats:4222
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CORS_ORIGIN=http://localhost:3000
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    restart: unless-stopped
+    networks:
+      - church-planner-network
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - auth_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - church-planner-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - auth_redis_data:/data
+    restart: unless-stopped
+    networks:
+      - church-planner-network
+
+  nats:
+    image: nats:2.9-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    restart: unless-stopped
+    command: ["-js", "-m", "8222"]
+    networks:
+      - church-planner-network
+
+networks:
+  church-planner-network:
+    driver: bridge
+
+volumes:
+  auth_postgres_data:
+  auth_redis_data: 

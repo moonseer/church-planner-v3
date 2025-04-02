@@ -1,0 +1,141 @@
+name: Church Planner CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        service: [auth-service, churches-service, members-service, events-service, scheduling-service, messaging-service, file-service, frontend]
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+      
+      - name: Install Dependencies
+        run: |
+          cd ${{ matrix.service }}
+          npm ci
+      
+      - name: Lint
+        run: |
+          cd ${{ matrix.service }}
+          npm run lint
+      
+      - name: Test
+        run: |
+          cd ${{ matrix.service }}
+          npm test
+  
+  build:
+    name: Build and Push
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    strategy:
+      matrix:
+        service: [auth-service, churches-service, members-service, events-service, scheduling-service, messaging-service, file-service, frontend]
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Build and Push
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:latest
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:buildcache,mode=max
+  
+  deploy:
+    name: Deploy to Kubernetes
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+      
+      - name: Set Kubernetes context
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+      
+      - name: Deploy to Kubernetes
+        run: |
+          # Update image tags in kubernetes manifests
+          find k8s -type f -name "*.yaml" -exec sed -i "s|\${DOCKER_REGISTRY}|${{ env.DOCKER_REGISTRY }}|g" {} \;
+          find k8s -type f -name "*.yaml" -exec sed -i "s|:latest|:${{ github.sha }}|g" {} \;
+          
+          # Apply kubernetes manifests
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/postgres.yaml
+          kubectl apply -f k8s/redis.yaml
+          kubectl apply -f k8s/nats.yaml
+          kubectl apply -f k8s/auth-service.yaml
+          kubectl apply -f k8s/churches-service.yaml
+          kubectl apply -f k8s/members-service.yaml
+          kubectl apply -f k8s/events-service.yaml
+          kubectl apply -f k8s/scheduling-service.yaml
+          kubectl apply -f k8s/messaging-service.yaml
+          kubectl apply -f k8s/file-service.yaml
+          kubectl apply -f k8s/api-gateway.yaml
+          kubectl apply -f k8s/frontend.yaml
+          
+          # Wait for deployments to be ready
+          kubectl -n church-planner rollout status deployment/auth-service
+          kubectl -n church-planner rollout status deployment/churches-service
+          kubectl -n church-planner rollout status deployment/members-service
+          kubectl -n church-planner rollout status deployment/events-service
+          kubectl -n church-planner rollout status deployment/scheduling-service
+          kubectl -n church-planner rollout status deployment/messaging-service
+          kubectl -n church-planner rollout status deployment/file-service
+          kubectl -n church-planner rollout status deployment/frontend
+      
+      - name: Verify Deployment
+        run: |
+          kubectl -n church-planner get all 
